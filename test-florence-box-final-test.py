@@ -1,89 +1,193 @@
+import streamlit as st
 import cv2
-import time
 import torch
-import os
+import time
 import warnings
-from transformers import AutoProcessor, AutoModelForCausalLM, AutoConfig
+import os
+import numpy as np
+from transformers import AutoProcessor, AutoModelForCausalLM
 from PIL import Image
 
-# --- CONFIGURATION SYSTÈME ---
+# --------------------------------------------------
+# CONFIGURATION
+# --------------------------------------------------
+
+st.set_page_config(
+    page_title="Florence-2 Vision AI",
+    layout="centered"
+)
+
+st.title("👁️ IA de Vision en Temps Réel")
+st.markdown("Analyse en direct avec Florence-2")
+
 warnings.filterwarnings("ignore")
 os.environ["TRANSFORMERS_VERIFY_SCHEDULED_REMOVAL"] = "false"
 
-device = "cpu"
-model_id = "microsoft/Florence-2-base"
+MODEL_ID = "microsoft/Florence-2-base"
+DEVICE = "cpu"
 
-print(f"--- SYSTÈME D'ANALYSE HAUTE PERFORMANCE (TERMINAL ONLY) ---")
 
-try:
-    config = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
-    config.use_cache = False
-    config.forced_bos_token_id = None
-    processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
+# --------------------------------------------------
+# LOAD MODEL (CACHE)
+# --------------------------------------------------
+
+@st.cache_resource
+def load_model():
+
+    processor = AutoProcessor.from_pretrained(
+        MODEL_ID,
+        trust_remote_code=True
+    )
+
     model = AutoModelForCausalLM.from_pretrained(
-        model_id, config=config, trust_remote_code=True, attn_implementation="eager"
-    ).to(device)
-    print("✅ Modèle chargé. Prêt pour l'analyse profonde.")
-except Exception as e:
-    print(f"❌ Erreur : {e}")
-    exit()
+        MODEL_ID,
+        trust_remote_code=True
+    ).to(DEVICE)
 
-# --- PARAMÈTRES ---
-cap = cv2.VideoCapture(0)
-analysis_frequency = 6  # On peut baisser à 6s car on ne consomme plus de GPU pour l'affichage
-last_analysis_time = 0
+    # optimisation stabilité
+    model.config.use_cache = False
 
-print("\n🚀 Lancement. Surveillez le terminal ci-dessous pour les descriptions détaillées.")
-print("Appuyez sur 'q' sur la fenêtre vidéo pour arrêter.\n")
+    return processor, model
 
-while True:
-    ret, frame = cap.read()
-    if not ret: break
 
-    # Affichage simple du flux (léger)
-    cv2.imshow('Camera (Analyse en cours dans le terminal)', frame)
+processor, model = load_model()
 
-    current_time = time.time()
-    if current_time - last_analysis_time > analysis_frequency:
-        last_analysis_time = current_time
 
-        try:
-            # Préparation image
-            image_pil = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+# --------------------------------------------------
+# UI
+# --------------------------------------------------
 
-            # --- ANALYSE DU CONTEXTE GLOBAL ---
-            inputs_desc = processor(text="<MORE_DETAILED_CAPTION>", images=image_pil, return_tensors="pt").to(device)
+col1, col2 = st.columns([2, 1])
 
-            # --- ANALYSE DES OBJETS (L'ARÇON, OBJETS EN MAIN, ETC.) ---
-            inputs_od = processor(text="<OD>", images=image_pil, return_tensors="pt").to(device)
+with col1:
+    run = st.checkbox("Activer la caméra")
+
+    frame_placeholder = st.empty()
+
+with col2:
+    st.subheader("Résultat")
+
+    description_box = st.empty()
+
+    objects_box = st.empty()
+
+
+# --------------------------------------------------
+# CAMERA LOOP
+# --------------------------------------------------
+
+if run:
+
+    cap = cv2.VideoCapture(0)
+
+    last_analysis = 0
+
+    ANALYSIS_INTERVAL = 5  # secondes
+
+
+    while run:
+
+        ret, frame = cap.read()
+
+        if not ret:
+            st.error("Impossible d'accéder à la caméra")
+            break
+
+
+        # afficher image
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+        frame_placeholder.image(
+            frame_rgb,
+            channels="RGB",
+            use_container_width=True
+        )
+
+
+        # analyse périodique
+        current_time = time.time()
+
+        if current_time - last_analysis > ANALYSIS_INTERVAL:
+
+            last_analysis = current_time
+
+            image = Image.fromarray(frame_rgb)
+
+
+            # -------- description --------
+            inputs_desc = processor(
+                text="<MORE_DETAILED_CAPTION>",
+                images=image,
+                return_tensors="pt"
+            ).to(DEVICE)
+
+
+            # -------- objets --------
+            inputs_od = processor(
+                text="<OD>",
+                images=image,
+                return_tensors="pt"
+            ).to(DEVICE)
+
 
             with torch.no_grad():
-                # Génération de la description riche
-                out_desc = model.generate(**inputs_desc, max_new_tokens=200, num_beams=1, use_cache=False)
-                description = processor.batch_decode(out_desc, skip_special_tokens=True)[0]
 
-                # Génération de la liste d'objets
-                out_od = model.generate(**inputs_od, max_new_tokens=100, num_beams=1, use_cache=False)
-                pred_od = processor.batch_decode(out_od, skip_special_tokens=True)[0]
-                parsed_od = processor.post_process_generation(pred_od, task="<OD>",
-                                                              image_size=(frame.shape[1], frame.shape[0]))
+                # description
+                output_desc = model.generate(
+                    **inputs_desc,
+                    max_new_tokens=150,
+                    num_beams=1
+                )
 
-            # --- AFFICHAGE PROPRE DANS LE TERMINAL ---
-            timestamp = time.strftime("%H:%M:%S")
-            print("-" * 60)
-            print(f"🕒 HEURE : {timestamp}")
-            print(f"📝 CONTEXTE : {description}")
+                description = processor.batch_decode(
+                    output_desc,
+                    skip_special_tokens=True
+                )[0]
 
-            if "labels" in parsed_od and parsed_od["labels"]:
-                obj_list = ", ".join(set(parsed_od["labels"]))  # set() pour éviter les doublons
-                print(f"📦 OBJETS DÉTECTÉS : {obj_list}")
-            print("-" * 60)
 
-        except Exception as e:
-            print(f"⚠️ Erreur analyse : {e}")
+                # objets
+                output_od = model.generate(
+                    **inputs_od,
+                    max_new_tokens=100,
+                    num_beams=1
+                )
 
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        break
+                decoded_od = processor.batch_decode(
+                    output_od,
+                    skip_special_tokens=True
+                )[0]
 
-cap.release()
-cv2.destroyAllWindows()
+
+                parsed = processor.post_process_generation(
+                    decoded_od,
+                    task="<OD>",
+                    image_size=(frame.shape[1], frame.shape[0])
+                )
+
+
+            # afficher description
+            description_box.markdown(
+                f"**📝 Description :**\n{description}"
+            )
+
+
+            # afficher objets
+            if "labels" in parsed and parsed["labels"]:
+
+                objects = list(set(parsed["labels"]))
+
+                objects_box.markdown(
+                    "**📦 Objets détectés :**\n" +
+                    ", ".join(objects)
+                )
+
+
+        time.sleep(0.01)
+
+
+    cap.release()
+
+
+else:
+
+    st.info("Activez la caméra pour démarrer.")
