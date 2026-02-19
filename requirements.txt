@@ -1,8 +1,8 @@
-streamlit==1.32.2
-torch==2.2.2
-transformers==4.40.2
-opencv-python-headless==4.9.0.80
-pillow==10.3.0
-numpy==1.26.4
-timm==0.9.16
-safetensors==0.4.3
+streamlit
+torch>=2.5.0
+transformers>=4.46.0
+opencv-python-headless
+pillow
+numpy
+timm
+safetensors
