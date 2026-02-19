@@ -18,6 +18,7 @@ print(f"--- SYSTÈME D'ANALYSE HAUTE PERFORMANCE (TERMINAL ONLY) ---")
 try:
     config = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
     config.use_cache = False
+    config.forced_bos_token_id = None
     processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
     model = AutoModelForCausalLM.from_pretrained(
         model_id, config=config, trust_remote_code=True, attn_implementation="eager"
